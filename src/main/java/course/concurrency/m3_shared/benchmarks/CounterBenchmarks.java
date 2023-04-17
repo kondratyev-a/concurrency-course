@@ -17,8 +17,8 @@ import java.util.concurrent.locks.*;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class CounterBenchmarks {
 
-    public static final int WRITERS = 7;
-    public static final int READERS = 1;
+    public static final int WRITERS = 24;
+    public static final int READERS = 24;
 
     private final AtomicLong atomicLongCounter = new AtomicLong();
     private final LongAdder longAdderCounter = new LongAdder();
