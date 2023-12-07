@@ -7,12 +7,13 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.stream.Collectors.toList;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.*;
 
-public class MountTableRefresherServiceTests {
+class MountTableRefresherServiceTests {
 
     private MountTableRefresherService service;
 
@@ -22,7 +23,7 @@ public class MountTableRefresherServiceTests {
 
     @BeforeEach
     public void setUpStreams() {
-        service = new MountTableRefresherService();
+        service = Mockito.spy(new MountTableRefresherService());
         service.setCacheUpdateTimeout(1000);
         routerStore = mock(Others.RouterStore.class);
         manager = mock(Others.MountTableManager.class);
@@ -39,48 +40,109 @@ public class MountTableRefresherServiceTests {
 
     @Test
     @DisplayName("All tasks are completed successfully")
-    public void allDone() {
+    void allDone() {
         // given
-        MountTableRefresherService mockedService = Mockito.spy(service);
-        List<String> addresses = List.of("123", "local6", "789", "local");
-
+        initialize();
         when(manager.refresh()).thenReturn(true);
 
-        List<Others.RouterState> states = addresses.stream()
-                .map(a -> new Others.RouterState(a)).collect(toList());
-        when(routerStore.getCachedRecords()).thenReturn(states);
-        // smth more
-
         // when
-        mockedService.refresh();
+        service.refresh();
 
         // then
-        verify(mockedService).log("Mount table entries cache refresh successCount=4,failureCount=0");
+        verify(service, never()).log("Not all router admins updated their cache");
+        verify(service).log("Mount table entries cache refresh successCount=4,failureCount=0");
         verify(routerClientsCache, never()).invalidate(anyString());
     }
 
     @Test
     @DisplayName("All tasks failed")
-    public void noSuccessfulTasks() {
+    void noSuccessfulTasks() {
+        // given
+        initialize();
+        when(manager.refresh()).thenReturn(false);
 
+        // when
+        service.refresh();
+
+        // then
+        verify(service, times(1)).log("Not all router admins updated their cache");
+        verify(service).log("Mount table entries cache refresh successCount=0,failureCount=4");
+        verify(routerClientsCache, times(4)).invalidate(anyString());
     }
 
     @Test
     @DisplayName("Some tasks failed")
-    public void halfSuccessedTasks() {
+    void halfSuccessedTasks() {
+        // given
+        initialize();
+        when(manager.refresh()).thenReturn(true, false, true, false);
 
+        // when
+        service.refresh();
+
+        // then
+        verify(service, times(1)).log("Not all router admins updated their cache");
+        verify(service).log("Mount table entries cache refresh successCount=2,failureCount=2");
+        verify(routerClientsCache, times(2)).invalidate(anyString());
     }
 
     @Test
     @DisplayName("One task completed with exception")
-    public void exceptionInOneTask() {
+    void exceptionInOneTask() {
+        // given
+        initialize();
+        mockManagerAnswer("exception");
 
+        // when
+        service.refresh();
+
+        // then
+        verify(service, times(1)).log("Not all router admins updated their cache");
+        verify(service).log("Mount table entries cache refresh successCount=3,failureCount=1");
+        verify(routerClientsCache, times(1)).invalidate(anyString());
     }
 
     @Test
     @DisplayName("One task exceeds timeout")
-    public void oneTaskExceedTimeout() {
+    void oneTaskExceedTimeout() {
+        // given
+        initialize();
+        mockManagerAnswer("timeout");
 
+        // when
+        service.refresh();
+
+        // then
+        verify(service, times(1)).log("Not all router admins updated their cache");
+        verify(service).log("Mount table entries cache refresh successCount=3,failureCount=1");
+        verify(routerClientsCache, times(1)).invalidate(anyString());
+    }
+
+    private void initialize() {
+        List<String> addresses = List.of("123", "local6", "789", "local");
+
+        List<Others.RouterState> states = addresses.stream()
+                .map(Others.RouterState::new).collect(toList());
+        when(routerStore.getCachedRecords()).thenReturn(states);
+        when(service.createMountTableManager(anyString())).thenReturn(manager);
+    }
+
+    private void mockManagerAnswer(String action) {
+        var count = new AtomicInteger();
+
+        when(manager.refresh()).thenAnswer(a -> {
+            count.incrementAndGet();
+            if (count.get() == 1) {
+                if (action.equals("timeout"))
+                    Thread.sleep(10000);
+                else if (action.equals("exception")) {
+                    throw new RuntimeException();
+                }
+                return false;
+            } else {
+                return true;
+            }
+        });
     }
 
 }
